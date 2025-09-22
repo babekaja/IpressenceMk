@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = 'http://localhost/api.php'
+const API_BASE_URL = 'https://backend-ipressence.onrender.com'
 
 const api = axios.create({
   baseURL: API_BASE_URL,

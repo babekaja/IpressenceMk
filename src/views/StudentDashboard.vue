@@ -151,32 +151,14 @@
         <v-card-text>
           <v-row>
             <v-col cols="12" md="4">
-              <!-- Liste des caméras (ne provoque PAS de popup) -->
-              <v-select
-                v-model="selectedDeviceId"
-                :items="cameraDevices"
-                item-title="label"
-                item-value="deviceId"
-                label="Caméra"
-                dense
-                :loading="loadingDevices"
-                hide-details
-              />
-
+              <!-- C'est ici que l'autorisation est demandée et que le scan démarre ! -->
               <div class="mt-3">
-                <!-- LANCER est le moment où on demande la permission -->
                 <v-btn color="success" @click="requestAndStart" :loading="loadingPermission || scannerRunning" :disabled="scannerRunning">
                   <v-icon left>mdi-camera</v-icon>Lancer la caméra
                 </v-btn>
 
                 <v-btn color="error" @click="stopScanner" class="ml-2" :disabled="!scannerRunning">
                   <v-icon left>mdi-camera-off</v-icon>Arrêter
-                </v-btn>
-              </div>
-
-              <div class="mt-4">
-                <v-btn small color="primary" @click="refreshDevices" :loading="loadingDevices">
-                  <v-icon left>mdi-refresh</v-icon>Rafraîchir caméras
                 </v-btn>
               </div>
 
@@ -262,11 +244,7 @@ const scannerRunning = ref(false)
 const previewActive = ref(false)
 const permissionMessage = ref('')
 const lastError = ref('')
-const loadingDevices = ref(false)
 const loadingPermission = ref(false)
-
-const cameraDevices = ref<Array<{ deviceId: string; label: string }>>([])
-const selectedDeviceId = ref<string | null>(null)
 
 const presenceHeaders = [
   { title: 'Session ID', key: 'session_id' },
@@ -283,32 +261,6 @@ function setLastError(err: unknown) {
   console.debug('ErrorInfo:', info)
 }
 
-/* ---------- camera & devices (no silent getUserMedia by default) ---------- */
-const refreshDevices = async () => {
-  loadingDevices.value = true
-  permissionMessage.value = ''
-  try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-      permissionMessage.value = "navigator.mediaDevices.enumerateDevices() non supporté."
-      cameraDevices.value = []
-      loadingDevices.value = false
-      return
-    }
-
-    // We do NOT call getUserMedia() here — labels may be empty until permission
-    const devices = await navigator.mediaDevices.enumerateDevices()
-    const cams = devices
-      .filter(d => d.kind === 'videoinput')
-      .map(d => ({ deviceId: d.deviceId, label: d.label || `Caméra ${d.deviceId.slice(-4)}` }))
-    cameraDevices.value = cams
-    if (cams.length && !selectedDeviceId.value) selectedDeviceId.value = cams[0].deviceId
-  } catch (err: unknown) {
-    setLastError(err)
-    const info = getErrorInfo(err)
-    permissionMessage.value = 'Impossible de lister les caméras : ' + info.message
-  } finally { loadingDevices.value = false }
-}
-
 /* ---------- preview & scanner: permission requested WHEN user clicks Lancer ---------- */
 async function stopPreview() {
   try {
@@ -323,12 +275,13 @@ async function stopPreview() {
   }
 }
 
-async function startPreviewForDevice(deviceId: string) {
+async function startPreviewForDevice() {
   await stopPreview()
   loadingPermission.value = true
   try {
-    // this request WILL trigger the browser permission popup
-    const constraints: MediaStreamConstraints = { video: { deviceId: { exact: deviceId } } }
+    // Cette ligne déclenche la demande de permission de la caméra
+    // (le popup du navigateur s'affichera ici)
+    const constraints: MediaStreamConstraints = { video: { facingMode: 'environment' } }
     localStream = await navigator.mediaDevices.getUserMedia(constraints)
     if (videoEl.value) {
       videoEl.value.srcObject = localStream
@@ -350,20 +303,19 @@ async function startPreviewForDevice(deviceId: string) {
 }
 
 const requestAndStart = async () => {
-  if (!selectedDeviceId.value) { permissionMessage.value = 'Sélectionne une caméra.'; return }
   permissionMessage.value = ''
   lastError.value = ''
   try {
-    // explicit permission request here
-    await startPreviewForDevice(selectedDeviceId.value)
+    // Demande explicite de permission ici
+    await startPreviewForDevice()
   } catch (_err) {
-    return // message already set inside startPreviewForDevice
+    return // Le message d'erreur est déjà défini à l'intérieur de startPreviewForDevice
   }
   await nextTick()
-  await startScanner(selectedDeviceId.value)
+  await startScanner()
 }
 
-const startScanner = async (deviceId: string) => {
+const startScanner = async () => {
   if (scannerRunning.value) return
   if (!qrReaderEl.value) { permissionMessage.value = 'Container scanner introuvable'; return }
   try {
@@ -375,7 +327,7 @@ const startScanner = async (deviceId: string) => {
 
     if (!qrReaderEl.value.id) qrReaderEl.value.id = 'qr-reader'
     scannerInstance = new Html5Qrcode(qrReaderEl.value.id)
-    const cameraConfig = { deviceId: { exact: deviceId } }
+    const cameraConfig = { facingMode: "environment" }
     const config = { fps: 10, qrbox: 250 }
 
     await scannerInstance.start(
@@ -469,8 +421,6 @@ const openScannerDialog = async () => {
   scannerDialog.value = true
   await nextTick()
   if (qrReaderEl.value && !qrReaderEl.value.id) qrReaderEl.value.id = 'qr-reader'
-  // refresh device list WITHOUT asking permission
-  await refreshDevices()
 }
 
 const closeScannerDialog = async () => {
@@ -497,8 +447,6 @@ const logout = () => { localStorage.removeItem('user'); router.push('/login') }
 onMounted(async () => {
   if (!user.value || user.value.type !== 'student') router.push('/login')
   else {
-    // initial devices list (no permission popup)
-    await refreshDevices()
     loadMyPresences()
   }
 })
